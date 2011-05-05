@@ -45,7 +45,7 @@ module Mongoid::Search
       return criteria.all if query.blank? && allow_empty_search
 
       keywords = Util.keywords(query, stem_keywords, ignore_list)
-
+    
       map = <<-EOS
         function() {
           var entries = 0
