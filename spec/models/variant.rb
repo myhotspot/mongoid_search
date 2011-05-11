@@ -1,4 +1,4 @@
 class Variant < Product
   field :color
-  search_in :color
+  search_in :default, :color
 end

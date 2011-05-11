@@ -3,30 +3,36 @@ module Mongoid::Search
 
   included do
     cattr_accessor :search_fields, :match, :allow_empty_search, :relevant_search, :stem_keywords, :ignore_list
+    self.match = {}
+    self.allow_empty_search = {}
+    self.relevant_search = {}
+    self.stem_keywords = {}
+    self.ignore_list = {}
+    self.search_fields = {}   
+    field :_keywords, :default => {}
+    index :_keywords
+    before_save :set_keywords
   end
 
   module ClassMethods #:nodoc:
     # Set a field or a number of fields as sources for search
-    def search_in(*args)
+    def search_in(namespace, *args)
+            
       options = args.last.is_a?(Hash) && [:match, :allow_empty_search, :relevant_search, :stem_keywords, :ignore_list].include?(args.last.keys.first) ? args.pop : {}
-      self.match              = [:any, :all].include?(options[:match]) ? options[:match] : :any
-      self.allow_empty_search = [true, false].include?(options[:allow_empty_search]) ? options[:allow_empty_search] : false
-      self.relevant_search    = [true, false].include?(options[:relevant_search]) ? options[:allow_empty_search] : false
-      self.stem_keywords      = [true, false].include?(options[:stem_keywords]) ? options[:allow_empty_search] : false
-      self.ignore_list        = YAML.load(File.open(options[:ignore_list]))["ignorelist"] if options[:ignore_list].present?
-      self.search_fields      = (self.search_fields || []).concat args
-
-      field :_keywords, :type => Array
-      index :_keywords
-
-      before_save :set_keywords
+      raise "Namespace not found" if namespace.empty?
+      self.match[namespace]              = [:any, :all].include?(options[:match]) ? options[:match] : :any
+      self.allow_empty_search[namespace] = [true, false].include?(options[:allow_empty_search]) ? options[:allow_empty_search] : false
+      self.relevant_search[namespace]    = [true, false].include?(options[:relevant_search]) ? options[:allow_empty_search] : false
+      self.stem_keywords[namespace]      = [true, false].include?(options[:stem_keywords]) ? options[:allow_empty_search] : false
+      self.ignore_list[namespace]        = YAML.load(File.open(options[:ignore_list]))["ignorelist"] if options[:ignore_list].present?      
+      self.search_fields[namespace]      = (self.search_fields[namespace] || []).concat args
     end
 
-    def search(query, options={})
-      if relevant_search
-        search_relevant(query, options)
+    def search(namespace, query, options={})
+      if relevant_search[namespace]
+        search_relevant(namespace, query, options)
       else
-        search_without_relevance(query, options)
+        search_without_relevance(namespace, query, options)
       end
     end
     
@@ -34,25 +40,29 @@ module Mongoid::Search
     # alternate method
     alias csearch search
 
-    def search_without_relevance(query, options={})
-      return criteria.all if query.blank? && allow_empty_search
-      criteria.send("#{(options[:match]||self.match).to_s}_in", :_keywords => Util.keywords(query, stem_keywords, ignore_list).map { |q| /#{q}/ })
+    def search_without_relevance(namespace, query, options={})
+      raise "Namespace not found" unless namespace
+      return criteria.all if query.blank? && allow_empty_search[namespace]
+      namespace_string = "_keywords." + namespace.inspect
+      namespace_string[10] = ""
+      criteria.send("#{(options[:match]||self.match[namespace]).to_s}_in", namespace_string => Util.keywords(query, stem_keywords[namespace], ignore_list[namespace]).map { |q| /#{q}/ })
     end
     
     # I know what this method should do, but I don't really know what it does.
     # It was a pull from another fork, with no tests on it. Proably should be rewrited (and tested).
-    def search_relevant(query, options={})
-      return criteria.all if query.blank? && allow_empty_search
-
-      keywords = Util.keywords(query, stem_keywords, ignore_list)
+    def search_relevant(namespace, query, options={})
+      raise "Namespace not found" unless namespace
+      return criteria.all if query.blank? && self.allow_empty_search[namespace]
+           
+      keywords = Util.keywords(query, stem_keywords[namespace], ignore_list[namespace])
     
       map = <<-EOS
         function() {
           var entries = 0
           for(i in keywords)
-            for(j in this._keywords) {
-              if(this._keywords[j] == keywords[i])
-                entries++
+              for(j in this._keywords[namespace]) {
+                if(this._keywords[namespace][j] == keywords[i])
+                  entries++
             }
           if(entries > 0)
             emit(this._id, entries)
@@ -65,7 +75,9 @@ module Mongoid::Search
       EOS
 
       #raise [self.class, self.inspect].inspect
-
+        
+      
+      
       kw_conditions = keywords.map do |kw|
         {:_keywords => kw}
       end
@@ -76,10 +88,13 @@ module Mongoid::Search
 
       options.delete(:limit)
       options.delete(:skip)
-      options.merge! :scope => {:keywords => keywords}, :query => query
+      options.merge! :scope => {:keywords => keywords, :namespace => namespace}, :query => query
 
       # res = collection.map_reduce(map, reduce, options)
       # res.find.sort(['value', -1]) # Cursor
+      
+      puts options.inspect
+      
       collection.map_reduce(map, reduce, options)
     end
   end
@@ -88,30 +103,23 @@ module Mongoid::Search
 
   # TODO: This need some refactoring..
   def set_keywords
-    self._keywords = self.search_fields.map do |field|
-      if field.is_a?(Hash)
-        field.keys.map do |key|
-          attribute = self.send(key)
-          method = field[key]
-          #if attribute.is_a?(Array)
-            if method.is_a?(Array)
-              method.map {|m| Util.keywords attribute.send(m), stem_keywords, ignore_list }
-            else
-              Util.keywords attribute.send(method), stem_keywords, ignore_list
-              #attribute.map(&method).map { |t| Util.keywords t, stem_keywords, ignore_list }
-            end
-          #else                     
-          #  Util.keywords(attribute.send(method), stem_keywords, ignore_list)
-          #end
+    self.search_fields.keys.each do |namespace|      
+      self._keywords[namespace] = self.search_fields[namespace].map do |field|
+        if field.is_a?(Hash)              
+          field.keys.map do |key|
+            attribute = self.send(key)
+            method = field[key]   
+            attribute = [attribute] if !attribute.is_a?(Array)                                
+            method = [method]  if !method.is_a?(Array)
+            method.map {|m| attribute.map { |a| Util.keywords a.send(m), stem_keywords[namespace], ignore_list[namespace] } }
+          end
+        else          
+          value = self[field]
+          value = [value] if !value.is_a?(Array)
+          value.map {|v| Util.keywords(v, stem_keywords[namespace], ignore_list[namespace]) if v}
         end
-      else
-        value = self[field]
-        if value.is_a?(Array)
-          value.each {|v| Util.keywords(v, stem_keywords, ignore_list) if v}
-        else
-          Util.keywords(value, stem_keywords, ignore_list) if value
-        end
-      end
-    end.flatten.map(&:to_s).select{|f| not f.empty? }.uniq.sort
+      end.flatten.map(&:to_s).select{|f| not f.empty? }.uniq.sort
+      
+    end
   end
 end

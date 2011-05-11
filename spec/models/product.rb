@@ -9,5 +9,5 @@ class Product
   referenced_in   :category
   embeds_many     :subproducts
 
-  search_in :brand, :name, :outlet, :attrs, :tags => :name, :category => :name, :subproducts => [:brand, :name]
+  search_in :default, :brand, :name, :outlet, :attrs, :tags => :name, :category => :name, :subproducts => [:brand, :name]
 end
