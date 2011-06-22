@@ -11,7 +11,9 @@ Mongoid.configure do |config|
   config.master = Mongo::Connection.new.db(name)
 end
 
-Dir["#{File.dirname(__FILE__)}/models/*.rb"].each { |file| require file }
+require "#{File.dirname(__FILE__)}/models/product.rb"
+
+Dir["#{File.dirname(__FILE__)}/models/*.rb"].each { |file| require File.expand_path(file) }
 
 DatabaseCleaner.orm = :mongoid
 

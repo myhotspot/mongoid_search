@@ -8,7 +8,9 @@ module Util
       to_s.
       gsub(/[._:;'"`,?|+={}()!@#%^&*<>~\$\-\\\/\[\]]/, ' '). # strip punctuation
       gsub(/[^[:alnum:]\s]/,'').   # strip accents     
+      mb_chars.
       downcase.
+      to_s.
       split(' ').
       reject { |word| word.size < 2 }
     text = text.reject { |word| ignore_list.include?(word) } unless ignore_list.blank?
